@@ -1,189 +1,187 @@
-# MySQL Persistence Implementation Plan
+# Check-in GUI Implementation Plan
 
 ## Overview
-The project already supports MySQL persistence via the MariaDB JDBC driver (MySQL-compatible). The `SqlStorage` class handles MySQL/MariaDB/PostgreSQL/SQLite. This plan covers configuration, migration from JSON, and any code adjustments needed for production MySQL use.
+Implement a 6x9 grid GUI for check-in system (54 days total) using SimpleGui library pattern from auctionhouse mod.
+
+### Core Requirements
+- **Grid**: 54 glass panes (6 rows × 9 columns), numbered 1-54 sequentially
+- **Green pane**: Day already checked in - displays "X天" where X is the slot number
+- **Yellow pane**: Today's check-in slot - allows player to click and sign in
+- **Red pane**: Future/missed days - also display "X天" but red, non-interactive
 
 ---
 
-## Current State Analysis
+## Design Decisions
 
-### Already Implemented
-- `SqlStorage.java:44-46` - MySQL/MariaDB connection via `jdbc:mariadb://` URL
-- `EconomyConfig.java:22-33` - Storage config with `type`, `host`, `port`, `database`, `user`, `password`, `tablePrefix`, `poolSize`
-- `EconomyManager.java:52-59` - Storage initialization based on config type
-- `build.gradle:38` - MariaDB JDBC driver dependency (`org.mariadb.jdbc:mariadb-java-client`)
-
-### Config Defaults (generated on first run)
-```json
-{
-  "storage": {
-    "type": "JSON",
-    "host": "localhost",
-    "port": 3306,
-    "database": "savs_economy",
-    "user": "root",
-    "password": "password",
-    "tablePrefix": "savs_eco_",
-    "poolSize": 10,
-    "connectionTimeout": 30000,
-    "idleTimeout": 600000
-  }
-}
-```
-
----
-
-## Implementation Tasks
-
-### 1. Update Storage Type Enum & Config Validation
-**File:** `src/main/java/savage/commoneconomy/config/EconomyConfig.java`
-- Add `MARIADB` alias to `StorageType` enum for clarity
-- Add config validation in `ConfigManager.loadMain()` to validate MySQL connection params when type is MYSQL/MARIADB
-
-### 2. Enhance SqlStorage for Production MySQL
-**File:** `src/main/java/savage/commoneconomy/storage/SqlStorage.java`
-
-**Changes needed:**
-- **Connection pool tuning**: Add `maximumPoolSize`, `minimumIdle`, `connectionTimeout`, `idleTimeout`, `maxLifetime` from config
-- **MySQL-specific optimizations**: 
-  - `cachePrepStmts=true`, `prepStmtCacheSize=250`, `prepStmtCacheSqlLimit=2048`
-  - `useServerPrepStmts=true`, `rewriteBatchedStatements=true`
-  - `useLocalSessionState=true`, `elideSetAutoCommits=true`
-- **SSL support**: Add `useSSL`, `verifyServerCertificate`, `requireSSL` config options
-- **Character set**: Ensure `characterEncoding=utf8mb4` and `connectionCollation=utf8mb4_unicode_ci`
-- **Auto-reconnect**: Add `autoReconnect=true`, `maxReconnects=3`
-
-### 3. Add MySQL-Specific Config Fields
-**File:** `src/main/java/savage/commoneconomy/config/EconomyConfig.java` → `StorageConfig`
+### 1. UI Structure (Using `MenuType.GENERIC_9x6`)
 ```java
-public boolean useSSL = false;
-public boolean verifyServerCertificate = false;
-public boolean requireSSL = false;
-public String characterEncoding = "utf8mb4";
-public String connectionCollation = "utf8mb4_unicode_ci";
-public int maxLifetime = 1800000; // 30 minutes
-public int minimumIdle = 2;
-```
-
-### 4. Migration Tool: JSON → MySQL
-**New File:** `src/main/java/savage/commoneconomy/storage/MigrationTool.java`
-- CLI command or admin command to migrate existing `balances.json` to MySQL
-- Steps:
-  1. Load all accounts from JSON storage
-  2. For each account, insert into MySQL with `ON DUPLICATE KEY UPDATE`
-  3. Report success/failure counts
-  4. Optionally backup JSON before migration
-
-**Admin Command:** `/economy migrate json-to-mysql`
-
-### 5. Health Check & Connection Validation
-**File:** `src/main/java/savage/commoneconomy/storage/SqlStorage.java`
-- Add `healthCheck()` method using `connection.isValid(5)`
-- Add startup validation: test connection on init, log clear error if fails
-- Add periodic validation in background (optional)
-
-### 6. Configuration Documentation
-**File:** `src/main/resources/config.json` (generated on first run) - ensure comments/docs for MySQL settings
-**Or:** Update `README.md` with MySQL setup guide
-
----
-
-## Configuration Example (config.json)
-
-```json
-{
-  "storage": {
-    "type": "MYSQL",
-    "host": "localhost",
-    "port": 3306,
-    "database": "savs_economy",
-    "user": "economy_user",
-    "password": "secure_password",
-    "tablePrefix": "savs_eco_",
-    "poolSize": 20,
-    "minimumIdle": 5,
-    "connectionTimeout": 30000,
-    "idleTimeout": 600000,
-    "maxLifetime": 1800000,
-    "useSSL": false,
-    "verifyServerCertificate": false,
-    "requireSSL": false,
-    "characterEncoding": "utf8mb4",
-    "connectionCollation": "utf8mb4_unicode_ci"
-  }
+public class GUICheckIn extends SimpleGui {
+    // Grid layout: slots 0-53 represent days 1-54
+    
+    @Override
+    public void updateDisplay() {
+        for each day slot (1 to 54):
+            Determine color and interactivity based on state
+            Create glass pane display element
+    }
 }
 ```
 
+### 2. Day Numbering Logic
+- **Day 1**: Server installation/mod activation date → grid position 0 (slot label "1天")
+- **Today's offset**: Calculate how many days have passed since Day 1
+- **Grid mapping**:
+  - Slot index = dayOffset (capped at 53)
+  - Name always shows `X天` where X is `(index + 1)` in Chinese numeral format
+
+### 3. State Types
+| Condition | Color (Item) | Interactive | Display Name |
+|-----------|--------------|-------------|--------------|
+| Day already checked in | `GREEN_STAINED_GLASS_PANE` | No | `X天` |
+| Today's day | `YELLOW_STAINED_GLASS_PANE` | Yes | `今天` or current date |
+| Past but missed/unchecked | `RED_STAINED_GLASS_PANE` | No | `X天` |
+| Future not yet reached | `GREY_STAINED_GLASS_PANE` (similar to uncolored) | No | `X天` |
+
+### 4. Reset Logic (After reaching Day 54)
+- When player completes check-in for Day 54:
+  - Recalculate day counter to reset progress
+  - Clear stored date records associated with that player's past days
+
 ---
 
-## MySQL Database Setup
+## Modifications Required
 
-```sql
-CREATE DATABASE savs_economy CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'economy_user'@'%' IDENTIFIED BY 'secure_password';
-GRANT ALL PRIVILEGES ON savs_economy.* TO 'economy_user'@'%';
-FLUSH PRIVILEGES;
+### File: `D:\Projet\mc\check-in\build.gradle`
+**Action**: Add SimpleGui dependency (compileOnly)
+
+```gradle
+dependencies {
+    // ... existing dependencies
+    
+    // SimpleGui - for server-side GUI library
+    compileOnly include("eu.pb4:sgui:2.0.2+26.0")
+}
 ```
 
-Table will be auto-created: `savs_eco_balances` with columns:
-- `uuid` VARCHAR(36) PRIMARY KEY
-- `name` VARCHAR(255)
-- `balance` DECIMAL(30, 2)
-- `version` BIGINT DEFAULT 0
+### File: `D:\Projet\mc\check-in\src\main\java\com\collapse\checkin\CheckInData.java`
+**Action**: Add methods to track check-ins and reset logic
+
+```java
+public class CheckInData extends SavedData {
+    // Add method for tracking total check count:
+    public int getCheckCount(UUID playerId) {
+        String key = CHECK_COUNT_PREFIX + playerId.toString();
+        return Integer.parseInt(checkIns.getOrDefault(key, "0"));
+    }
+    
+    public void incrementCheckCount(UUID playerId) {
+        int current = getCheckCount(playerId);
+        checkIns.put(CHECK_COUNT_PREFIX + playerId.toString(), 
+                     String.valueOf(current + 1));
+        setDirty();
+    }
+
+    // Add method for getting per-day check-ins:
+    public boolean hasCheckedInOnDate(UUID playerId, LocalDate date) {
+        return false; // Implement logic to get stored dates
+    }
+
+    // Reset after reaching Day 54 should be called from GUI or command
+    public void resetPlayerProgress(UUID playerId);
+}
+```
+
+### File: `D:\Projet\mc\check-in\src\main\java\com\collapse\checkin\CheckInCommand.java`
+**Action**: Register a new command `/checkin` that opens the GUI
+
+```java
+public class CheckInCommand {
+    public static void register() {
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
+            dispatcher.register(Commands.literal("checkin")
+                    .executes(context -> openGUI(context)));
+        });
+    }
+
+    // Add method `openGUI`:
+    private static int openGUI(CommandContext<CommandSourceStack> context) {
+        ServerPlayer player = context.getSource().getPlayer();
+        if (player == null) return Command.SINGLE_SUCCESS;
+        
+        new GUICheckIn(player).open();
+        return Command.SINGLE_SUCCESS;
+    }
+}
+```
+
+### File: `D:\Projet\mc\check-in\src\main\java\com\collapse\checkin\gui\GUIAuctionHouse.java` (New)
+**Action**: Create new GUI class (rename to proper package/class name)
+
+- Use same import pattern as auctionhouse reference
+- Implement `updateDisplay()` with loop from 0-53 (days 1-54)
+- Use logic similar to:
+  - For index 0-25: green pane if checked in for that day
+  - For today's slot: yellow pane, interactive check-in on click
+  - Others: red/grey panes based on date comparison
 
 ---
 
-## Migration Procedure
+## Implementation Steps (Sequential)
 
-1. **Backup**: Copy `config/savs-common-economy/balances.json` to safe location
-2. **Stop server**
-3. **Edit config.json**: Change `"type": "MYSQL"` and fill in MySQL credentials
-4. **Start server**: Tables auto-created
-5. **Run migration**: Execute `/economy migrate json-to-mysql` (new command)
-6. **Verify**: Check `/baltop` and player balances match
-7. **Optional**: Remove JSON backup after confirmation
+1. **Add dependency** to `build.gradle` and sync project
+2. **Update `CheckInData.java`**:
+   - Add tracking for per-date check-ins (persist dates as strings)
+   - Implement `resetPlayerProgress()` method
+   
+3. **Create GUI class `GUIAuctionHouse.java`** in `src/main/java/com/collapse/checkin/gui/` package:
+   - Extend `SimpleGui` using `MenuType.GENERIC_9x6` (from auctionhouse reference)
+   - Implement logic to:
+     - Calculate which day slot corresponds to today's date
+     - Render each of 54 slots with appropriate glass pane, name text, color
+     - Handle click on yellow pane to trigger check-in
 
----
+4. **Register command** in `CheckInCommand.java` to open the GUI
 
-## Code Changes Summary
-
-| File | Change Type | Description |
-|------|-------------|-------------|
-| `EconomyConfig.java` | Modify | Add MySQL-specific config fields |
-| `ConfigManager.java` | Modify | Validate MySQL config on load |
-| `SqlStorage.java` | Modify | Enhanced connection pool, SSL, charset, health check |
-| `MigrationTool.java` | New | JSON → MySQL migration utility |
-| `AdminEconomyCommands.java` | Modify | Add `/economy migrate` command |
-
----
-
-## Testing Checklist
-
-- [ ] Fresh MySQL install: server starts, tables created, balances work
-- [ ] Existing JSON data: migration command works, all balances preserved
-- [ ] Connection loss: graceful error handling, reconnection works
-- [ ] Pool exhaustion: max pool size respected, timeouts work
-- [ ] SSL connections: works with `useSSL=true` and proper certs
-- [ ] Large balances: DECIMAL(30,2) handles large numbers correctly
-- [ ] Concurrent access: optimistic locking (version) prevents race conditions
-- [ ] Cross-server sync: Redis pub/sub still works with MySQL storage
+5. **Add missing items constants** to `GuiUtil` (or include directly):
+   - `GREEN_STAINED_GLASS_PANE`, `YELLOW_STAINED_GLASS_PANE`, `RED_STAINED_GLASS_PANE`
+   
+6. **Build and test**:
+   - Ensure mod compiles with all imports resolved
+   - Open GUI via `/checkin` command → verify 54 panes displayed correctly
+   - Click yellow pane on a valid day to check in and confirm UI updates
 
 ---
 
-## Risks & Mitigations
+## Validation & Testing Plan
 
-| Risk | Mitigation |
-|------|------------|
-| MariaDB driver incompatibility with MySQL 8.0+ | Test with target MySQL version; driver 3.5.7 supports MySQL 8.0 |
-| Connection leaks | HikariCP leak detection; add `leakDetectionThreshold` |
-| Charset issues (emojis in names) | Enforce `utf8mb4` in JDBC URL and table creation |
-| Migration data loss | Dry-run mode; backup JSON first; transactional inserts |
-| Pool exhaustion under load | Monitor `HikariPoolMXBean`; tune `poolSize`/`maxLifetime` |
+### Pre-Implementation Checks
+- Verify SimpleGuiLib dependency resolves correctly (matches Java version)
+- Confirm `MenuType.GENERIC_9x6` available in imported library
+
+### In-Game Testing
+1. Launch server + client with mod enabled
+2. Start from Day 1 or recent date before first check-in attempt
+3. Check GUI displays with:
+   - Correct count (54 grid slots)
+   - Each slot labeled "X天" where X follows sequence 1 → 54
+   - Today's day highlighted as yellow, clickable
+
+4. Interact with today's pane and verify:
+   - Click sound plays
+   - Check-in executes (money reward or whatever defined)
+   - GUI closes automatically
+
+5. Reopen GUI after check-in:
+   - Past days show green + "X天" label (possibly still 1 day if missed previous)
+   - Today's slot is now green/gray
+   - Future slots remain red/grey
+
+6. Simulate late-game by manually setting date forward or fast-forward logic:
+   - Trigger reset after Day 54 completed → verify counter resets to zero
 
 ---
 
-## Out of Scope
-- PostgreSQL-specific features (already supported)
-- SQLite (already supported)
-- Redis persistence (Redis is for pub/sub only, not primary storage)
-- Backup/restore automation (external tooling recommended)
+## Risk Assessment & Notes
+- **SimpleGuiLib**: Must match Minecraft version (26.x) from dependencies. Default `MinecraftVersion` is likely 1.20/1.21 region based on auctionhouse config. Verify actual target version in gradle.properties file of check-in project.
+- **Item Colors**: Using `Items.GREEN_STAINED_GLASS_PANE` via Minecraft items API (works server-side). Requires correct `getDefaultInstance()`.
+- **Date calculations**: Use `LocalDate.now()` for today's calculation vs saved dates from server start. Ensure timezone consistency if needed.
